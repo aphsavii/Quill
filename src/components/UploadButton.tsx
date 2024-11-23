@@ -8,7 +8,6 @@ import {
   DialogTitle
 } from './ui/dialog'
 import { Button } from './ui/button'
-
 import Dropzone from 'react-dropzone'
 import { Cloud, File, Loader2 } from 'lucide-react'
 import { Progress } from './ui/progress'
@@ -23,30 +22,32 @@ const UploadDropzone = ({
   isSubscribed: boolean
 }) => {
   const router = useRouter()
-
-  const [isUploading, setIsUploading] =
-    useState<boolean>(false)
-  const [uploadProgress, setUploadProgress] =
-    useState<number>(0)
+  const [isUploading, setIsUploading] = useState<boolean>(false)
+  const [uploadProgress, setUploadProgress] = useState<number>(0)
   const { toast } = useToast()
 
   const { startUpload } = useUploadThing(
     isSubscribed ? 'proPlanUploader' : 'freePlanUploader'
   )
 
-  const { mutate: startPolling } = trpc.getFile.useMutation(
-    {
-      onSuccess: (file) => {
-        router.push(`/dashboard/${file.id}`)
-      },
-      retry: true,
-      retryDelay: 500,
-    }
-  )
+  const { mutate: startPolling } = trpc.getFile.useMutation({
+    onSuccess: (file) => {
+      router.push(`/dashboard/${file.id}`)
+    },
+    onError: (error) => {
+      console.error('Error polling file:', error)
+      toast({
+        title: 'Error uploading file',
+        description: 'Please try again later',
+        variant: 'destructive',
+      })
+    },
+    retry: true,
+    retryDelay: 500,
+  })
 
   const startSimulatedProgress = () => {
     setUploadProgress(0)
-
     const interval = setInterval(() => {
       setUploadProgress((prevProgress) => {
         if (prevProgress >= 95) {
@@ -56,7 +57,6 @@ const UploadDropzone = ({
         return prevProgress + 5
       })
     }, 500)
-
     return interval
   }
 
@@ -64,37 +64,39 @@ const UploadDropzone = ({
     <Dropzone
       multiple={false}
       onDrop={async (acceptedFile) => {
-        setIsUploading(true)
+        try {
+          setIsUploading(true)
+          const progressInterval = startSimulatedProgress()
 
-        const progressInterval = startSimulatedProgress()
+          console.log('Starting upload for file:', acceptedFile[0].name)
+          const res = await startUpload(acceptedFile)
 
-        // handle file uploading
-        const res = await startUpload(acceptedFile)
+          if (!res) {
+            throw new Error('Upload failed')
+          }
 
-        if (!res) {
-          return toast({
-            title: 'Something went wrong',
+          const [fileResponse] = res
+          const key = fileResponse?.key
+
+          if (!key) {
+            throw new Error('No file key received')
+          }
+
+          clearInterval(progressInterval)
+          setUploadProgress(100)
+          
+          console.log('File uploaded successfully, starting polling with key:', key)
+          startPolling({ key })
+
+        } catch (error) {
+          console.error('Upload error:', error)
+          setIsUploading(false)
+          toast({
+            title: 'Error uploading file',
             description: 'Please try again later',
             variant: 'destructive',
           })
         }
-
-        const [fileResponse] = res
-
-        const key = fileResponse?.key
-
-        if (!key) {
-          return toast({
-            title: 'Something went wrong',
-            description: 'Please try again later',
-            variant: 'destructive',
-          })
-        }
-
-        clearInterval(progressInterval)
-        setUploadProgress(100)
-
-        startPolling({ key })
       }}>
       {({ getRootProps, getInputProps, acceptedFiles }) => (
         <div
@@ -184,7 +186,7 @@ const UploadButton = ({
       </DialogTrigger>
 
       <DialogContent>
-        <DialogTitle> Drop Here </DialogTitle>
+        <DialogTitle>Upload your PDF</DialogTitle>
         <UploadDropzone isSubscribed={isSubscribed} />
       </DialogContent>
     </Dialog>

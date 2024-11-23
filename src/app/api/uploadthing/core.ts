@@ -1,13 +1,9 @@
 import { db } from '@/db'
 import { getKindeServerSession } from '@kinde-oss/kinde-auth-nextjs/server'
-import {
-  createUploadthing,
-  type FileRouter,
-} from 'uploadthing/next'
-
+import { createUploadthing, type FileRouter } from 'uploadthing/next'
 import { PDFLoader } from 'langchain/document_loaders/fs/pdf'
-import { OpenAIEmbeddings } from "@langchain/openai";
-import { PineconeStore } from "@langchain/pinecone";
+import { OpenAIEmbeddings } from "@langchain/openai"
+import { PineconeStore } from "@langchain/pinecone"
 import { getPineconeClient } from '@/lib/pinecone'
 import { getUserSubscriptionPlan } from '@/lib/stripe'
 import { PLANS } from '@/config/stripe'
@@ -15,14 +11,38 @@ import { PLANS } from '@/config/stripe'
 const f = createUploadthing()
 
 const middleware = async () => {
-  const { getUser } = getKindeServerSession()
-  const user = getUser()
+  try {
+    const { getUser } = getKindeServerSession()
+    const user = getUser()
 
-  if (!user || !user.id) throw new Error('Unauthorized')
+    console.log('Middleware - User ID:', user?.id)
 
-  const subscriptionPlan = await getUserSubscriptionPlan()
+    if (!user || !user.id) {
+      throw new Error('Unauthorized')
+    }
 
-  return { subscriptionPlan, userId: user.id }
+    // Verify user exists in database
+    const dbUser = await db.user.findUnique({
+      where: {
+        id: user.id
+      }
+    })
+
+    if (!dbUser) {
+      await db.user.create({
+        data: {
+          id: user.id,
+          email: user.email ?? ''
+        }
+      })
+    }
+
+    const subscriptionPlan = await getUserSubscriptionPlan()
+    return { subscriptionPlan, userId: user.id }
+  } catch (error) {
+    console.error('Middleware error:', error)
+    throw error
+  }
 }
 
 const onUploadComplete = async ({
@@ -36,52 +56,80 @@ const onUploadComplete = async ({
     url: string
   }
 }) => {
-  const isFileExist = await db.file.findFirst({
-    where: {
-      key: file.key,
-    },
-  })
-
-  if (isFileExist) return
-
-  const createdFile = await db.file.create({
-    data: {
-      key: file.key,
-      name: file.name,
-      userId: metadata.userId,
-      url: `https://utfs.io/f/${file.key}`,
-      uploadStatus: 'PROCESSING',
-    },
-  })
-
   try {
-    const response = await fetch(
-      `https://utfs.io/f/${file.key}`
-    )
+    const createdFile = await db.$transaction(async (tx) => {
+      console.log("Creating file:", file.key);
+      const exists = await tx.file.findFirst({
+        where: {
+          key: file.key,
+        },
+      })
 
-    const blob = await response.blob()
+      if (exists) {
+        console.log('File already exists:', file.key)
+        return exists
+      }
 
-    const loader = new PDFLoader(blob)
 
-    const pageLevelDocs = await loader.load()
+      return tx.file.create({
+        data: {
+          key: file.key,
+          name: file.name,
+          userId: metadata.userId,
+          url: `https://utfs.io/f/${file.key}`,
+          uploadStatus: 'PROCESSING',
+        },
+      })
+    })
 
-    const pagesAmt = pageLevelDocs.length
+    try {
+      const response = await fetch(`https://utfs.io/f/${file.key}`)
+      const blob = await response.blob()
+      const loader = new PDFLoader(blob)
+      const pageLevelDocs = await loader.load()
+      const pagesAmt = pageLevelDocs.length
 
-    const { subscriptionPlan } = metadata
-    const { isSubscribed } = subscriptionPlan
+      const { subscriptionPlan } = metadata
+      const { isSubscribed } = subscriptionPlan
 
-    const isProExceeded =
-      pagesAmt >
-      PLANS.find((plan) => plan.name === 'Pro')!.pagesPerPdf
-    const isFreeExceeded =
-      pagesAmt >
-      PLANS.find((plan) => plan.name === 'Free')!
-        .pagesPerPdf
+      const isProExceeded = pagesAmt > PLANS.find((plan) => plan.name === 'Pro')!.pagesPerPdf
+      const isFreeExceeded = pagesAmt > PLANS.find((plan) => plan.name === 'Free')!.pagesPerPdf
 
-    if (
-      (isSubscribed && isProExceeded) ||
-      (!isSubscribed && isFreeExceeded)
-    ) {
+      if ((isSubscribed && isProExceeded) || (!isSubscribed && isFreeExceeded)) {
+        await db.file.update({
+          data: {
+            uploadStatus: 'FAILED',
+          },
+          where: {
+            id: createdFile.id,
+          },
+        })
+        return
+      }
+
+      const pinecone = await getPineconeClient()
+      const pineconeIndex = pinecone.Index('quill')
+
+      const embeddings = new OpenAIEmbeddings({
+        openAIApiKey: process.env.OPENAI_API_KEY,
+        modelName: "text-embedding-3-small",
+      })
+
+      await PineconeStore.fromDocuments(pageLevelDocs, embeddings, {
+        pineconeIndex,
+        namespace: createdFile.id,
+      })
+
+      await db.file.update({
+        data: {
+          uploadStatus: 'SUCCESS',
+        },
+        where: {
+          id: createdFile.id,
+        },
+      })
+    } catch (processError) {
+      console.error('Processing error:', processError)
       await db.file.update({
         data: {
           uploadStatus: 'FAILED',
@@ -91,41 +139,9 @@ const onUploadComplete = async ({
         },
       })
     }
-    console.log("here");
-    // vectorize and index entire document
-    const pinecone = await getPineconeClient()
-    const pineconeIndex = pinecone.Index('quill')
-
-    const embeddings = new OpenAIEmbeddings({
-      openAIApiKey: process.env.OPENAI_API_KEY,
-      modelName:"text-embedding-3-small",
-    });
-
-    const vectorStore = await PineconeStore.fromExistingIndex(embeddings, {
-      pineconeIndex,
-      maxConcurrency: 5,
-      namespace: createdFile.id,
-    });
-    await vectorStore.addDocuments(pageLevelDocs);
-
-    await db.file.update({
-      data: {
-        uploadStatus: 'SUCCESS',
-      },
-      where: {
-        id: createdFile.id,
-      },
-    })
-  } catch (err) {
-    console.log(err);
-    await db.file.update({
-      data: {
-        uploadStatus: 'FAILED',
-      },
-      where: {
-        id: createdFile.id,
-      },
-    })
+  } catch (error) {
+    console.error('onUploadComplete error:', error)
+    throw error
   }
 }
 
