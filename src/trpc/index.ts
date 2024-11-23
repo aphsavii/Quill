@@ -187,6 +187,7 @@ export const appRouter = router({
           userId,
         },
       })
+      console.log(file);
 
       if (!file) throw new TRPCError({ code: 'NOT_FOUND' })
 
