@@ -57,8 +57,8 @@ const onUploadComplete = async ({
   }
 }) => {
   try {
+    console.log("Creating file:", file.key);
     const createdFile = await db.$transaction(async (tx) => {
-      console.log("Creating file:", file.key);
       const exists = await tx.file.findFirst({
         where: {
           key: file.key,
