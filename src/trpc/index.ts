@@ -176,20 +176,34 @@ export const appRouter = router({
       return { status: file.uploadStatus }
     }),
 
-  getFile: privateProcedure
+    getFile: privateProcedure
     .input(z.object({ key: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const { userId } = ctx
 
+      // Try finding the file without userId first
       const file = await db.file.findFirst({
         where: {
           key: input.key,
-          userId,
         },
       })
-      console.log(file);
 
-      if (!file) throw new TRPCError({ code: 'NOT_FOUND' })
+      console.log('Found file:', file);
+
+      // If file exists but doesn't belong to user
+      if (file && file.userId !== userId) {
+        throw new TRPCError({ 
+          code: 'UNAUTHORIZED',
+          message: 'You do not have access to this file'
+        })
+      }
+
+      if (!file) {
+        throw new TRPCError({ 
+          code: 'NOT_FOUND',
+          message: `File not found with key: ${input.key}`
+        })
+      }
 
       return file
     }),
