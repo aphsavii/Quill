@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogContent,
   DialogTrigger,
+  DialogTitle
 } from './ui/dialog'
 import { Button } from './ui/button'
 
@@ -183,6 +184,7 @@ const UploadButton = ({
       </DialogTrigger>
 
       <DialogContent>
+        <DialogTitle> Drop Here </DialogTitle>
         <UploadDropzone isSubscribed={isSubscribed} />
       </DialogContent>
     </Dialog>

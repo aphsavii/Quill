@@ -6,15 +6,15 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
 const MobileNav = ({ isAuth }: { isAuth: boolean }) => {
-  const [isOpen, setOpen] = useState<boolean>(false)
+  const [isOpen, setisOpen] = useState<boolean>(false)
 
-  const toggleOpen = () => setOpen((prev) => !prev)
+  const toggleOpen = () => setisOpen((prev) => !prev)
 
   const pathname = usePathname()
 
   useEffect(() => {
     if (isOpen) toggleOpen()
-  }, [pathname])
+  }, [isOpen, pathname])
 
   const closeOnCurrent = (href: string) => {
     if (pathname === href) {

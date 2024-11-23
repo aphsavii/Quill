@@ -3,6 +3,7 @@ import {
   Dialog,
   DialogContent,
   DialogTrigger,
+  DialogTitle
 } from './ui/dialog'
 import { Button } from './ui/button'
 import { Expand, Loader2 } from 'lucide-react'
@@ -42,6 +43,7 @@ const PdfFullscreen = ({ fileUrl }: PdfFullscreenProps) => {
         </Button>
       </DialogTrigger>
       <DialogContent className='max-w-7xl w-full'>
+        <DialogTitle>PDF Viewer</DialogTitle>
         <SimpleBar
           autoHide={false}
           className='max-h-[calc(100vh-10rem)] mt-6'>
